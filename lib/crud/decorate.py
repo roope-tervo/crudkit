@@ -1,21 +1,7 @@
 import requests, string, inspect
 from functools import wraps
 from urllib.parse import urlparse
-
-# pull relevant argument keys from requests.Request constructor
-req_argnames = inspect.getfullargspec(requests.Request)[0]
-
-
-class requestSessionStrategy:
-    def __call__(self, all_kwargs):
-
-        session = all_kwargs.get("session", requests.Session())
-
-        request_kwargs = extract_request_params(all_kwargs)
-
-        r = session.request(**request_kwargs)
-        r.raise_for_status()
-        return r
+from .strategy import NoopStrategy
 
 
 def is_url(url, *args):
@@ -28,26 +14,8 @@ def is_url(url, *args):
         return False
 
 
-def _extract_first(data, test=lambda x, _: x != None, default=None):
-    return next((x for x in iter(data) if test(x, data)), default)
-
-
-def extract_request_params(kwargs):
-    """extract from kwargs & args all parameters that can be relevant for the method `requests.request`"""
-    # first positional argument can be the url
-
-    if (
-        all(True for k in ["path", "base_url"] if kwargs.get(k) != None)
-        and kwargs.get("url") == None
-    ):
-        kwargs["url"] = kwargs["base_url"] + kwargs["path"]
-
-    relevant_kwargs = {key: value for key, value in kwargs.items() if key in req_argnames}
-    return relevant_kwargs
-
-
 def template(d, extra_vars={}):
-    """template all dict values that are strings and contain the delimiter $"""
+    """template all top level dict properties that are strings by type, and contain the delimiter character $"""
     templatable_keys = [key for key, value in d.items() if isinstance(value, str) and "$" in value]
     # print(templatable_keys)
     return {
@@ -59,10 +27,10 @@ def template(d, extra_vars={}):
     }
 
 
-def request_dec_factory():
+def decorate(strategy=NoopStrategy()):
+    """decorator factory function"""
 
-    # decorators module
-    def request(*top_args, strategy=requestSessionStrategy(), **top_kwargs):
+    def request(*top_args, strategy=strategy, **top_kwargs):
         """override to create the actual resource's read definition"""
 
         if "path" not in top_kwargs:
@@ -92,9 +60,8 @@ def request_dec_factory():
                     annotations,
                 ) = inspect.getfullargspec(f)
 
-                print(f.__code__)
-
                 # also use defaults from target function definition here automagically
+                # (so they are taken into account when templating string params!)
 
                 target_defaults = {}
                 if arg_defaults != None:
@@ -108,11 +75,11 @@ def request_dec_factory():
                 wrapped_args = []
                 wrapped_kwargs = []
 
-                # # check if decorating method instead of plain function
+                # # check if decorating method instead of plain function, grab first argument to wrapped function
                 maybe_self = next(iter(args), None)
 
-                # do this by seeing if the first positional is a class instance
-                # & the class contains the definition of the decorated function
+                # check method status of wrapped function by seeing if the first positional is a class instance,
+                # AND also that the class instance in question contains the decorated function as a member
                 is_self = (
                     inspect.isclass(type(maybe_self))
                     and len(
@@ -122,27 +89,27 @@ def request_dec_factory():
                 )
 
                 if is_self:
-                    wrapped_args.append(maybe_self)
                     # decorator was used on a method since the first argument
-                    # contains a class instance whose member is the __wrapped__ of f
+                    # contains a class instance whose member is the __wrapped__ of f, so we should pass the instance on as-is.
+                    wrapped_args.append(maybe_self)
 
                     # try to read attributes stashed by @crud.resource
                     ctx = getattr(maybe_self, "__crud_ctx", {})
-                    # get defaults (overrides locally allowed)
+
+                    # get default values for any parameters of the wrapped function from the class-level crud.resource decorator here
                     all_kwargs = {**ctx, **all_kwargs}
 
-                # template keyword args
-                all_kwargs = template(all_kwargs)
+                # template all keyword arguments, can be suppressed
+                if top_kwargs.get("do_template", True):
+                    all_kwargs = template(all_kwargs)
 
-                # no **kwargs specified so only pass relevant keyword args to wrapped function
+                # no **kwargs specified in definition of wrapped function, so we should only pass accepted keyword arguments to avoid errors!
                 if varkw_key == None:
                     wrapped_kwargs = {
                         key: value for key, value in all_kwargs.items() if key in arg_keys
                     }
                 else:
                     wrapped_kwargs = all_kwargs
-
-                print("going to strategy", all_kwargs)
 
                 r = strategy(all_kwargs)
 

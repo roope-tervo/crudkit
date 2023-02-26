@@ -2,7 +2,7 @@ from functools import wraps
 
 
 def resource(**top_kwargs):
-    """decorator for classes, will inject args to class instance under attribute __crud_ctx"""
+    """decorator for classes, will inject decorator kwargs to class instance under attribute __crud_ctx"""
 
     def resource_decorator(init):
         @wraps(init)

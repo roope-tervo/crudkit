@@ -8,8 +8,9 @@ from lib import crud
 def example():
     @crud.resource(base_url="https://jsonplaceholder.typicode.com")
     class SomeRestResource:
-        @crud.get(path="/users/${id}")
+        @crud.get(path="/posts/${id}")
         def get(self, response):
+            """get function docstring"""
             return response.json()
 
         @crud.request(path="/users", method="GET")
